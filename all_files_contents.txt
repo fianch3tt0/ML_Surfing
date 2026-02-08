@@ -1,0 +1,1059 @@
+
+================================================================================
+FILE: .gitignore
+================================================================================
+
+venv/
+
+
+
+================================================================================
+FILE: MARKER_MODE_README.md
+================================================================================
+
+# Marker Simulation Mode - ML_Surfing
+
+## Overview
+
+This document explains the **synthetic neon marker detection system** for testing surfboard detection without needing physical tape.
+
+### The Problem
+- OpenCV color/edge detection alone is **unreliable** for detecting surfboards in varying water/lighting conditions
+- Roboflow keypoint detection requires large labeled datasets
+- Physical neon tape requires equipment
+
+### The Solution
+**Synthetic marker simulation**: Add virtual bright neon markers to video frames in software, then detect them. This tests the full pipeline without hardware.
+
+---
+
+## How It Works
+
+### 1. Marker Placement
+Three synthetic bright markers are placed on each frame:
+- **Nose marker** (top of board)
+- **Tail marker** (bottom of board)  
+- **Center marker** (middle of board)
+
+They're positioned in the region of interest (ROI) below the surfer's feet using MediaPipe pose landmarks.
+
+### 2. Marker Detection
+- Markers are drawn in bright neon colors (Green, Pink, Yellow, or Orange)
+- HSV color range detection extracts marker centroids
+- Board orientation is calculated from the nose-to-tail vector
+- Angle and length are computed and displayed
+
+### 3. Board Drawing
+- A bounding box is drawn around the detected board
+- An arrow shows board orientation
+- Real-time stats show angle and length
+
+---
+
+## Usage
+
+### Enable Marker Simulation
+Set `USE_MARKER_MODE = True` at the top of `app.py`:
+
+```python
+USE_MARKER_MODE = True       # Enable synthetic neon tape detection
+MARKER_COLOR = 'green'       # Options: 'green', 'pink', 'yellow', 'orange'
+```
+
+### Runtime Controls in app.py
+
+| Key | Action |
+|-----|--------|
+| `m` | Toggle marker simulation on/off |
+| `d` | Toggle debug overlays |
+| `t` | Toggle optional tracker |
+| `q` or `ESC` | Quit |
+
+### Command Line Example
+
+```bash
+# Activate venv
+.\venv\Scripts\Activate.ps1
+
+# Run app with marker detection enabled
+python app.py
+```
+
+Press `m` during runtime to toggle between:
+- **Marker simulation mode**: Shows synthetic markers + board overlay
+- **OpenCV mode**: Uses traditional color/edge detection
+
+---
+
+## Demo Script (test_markers.py)  
+
+A standalone demo that shows just the marker detection pipeline:
+
+```bash
+python test_markers.py
+```
+
+**Controls in demo:**
+- `s` - Toggle marker simulation
+- `c` - Cycle through marker colors
+- `d` - Toggle detection overlay
+- `q` or `ESC` - Quit
+
+---
+
+## Marker Colors
+
+The simulator supports four bright neon colors:
+
+| Color | HSV Range | Use Case |
+|-------|-----------|----------|
+| **Green** | H: 35-85, S/V: 100-255 | Best in most conditions |
+| **Pink** | H: 125-165, S/V: 100-255 | Good contrast with water |
+| **Yellow** | H: 15-35, S/V: 100-255 | Very bright |
+| **Orange** | H: 5-25, S/V: 100-255 | Warm conditions |
+
+Change color in code:
+```python
+MARKER_COLOR = 'pink'  # or 'green', 'yellow', 'orange'
+```
+
+---
+
+## Next Steps: Real Tape
+
+Once marker simulation works reliably:
+
+1. **Buy neon tape** (Gaff tape, spike tape, or athletic tape in neon colors)
+2. **Place on board**: Nose, tail, and center near rails
+3. **Set `USE_MARKER_MODE = False`** in app.py to use real markers
+4. **Adjust HSV ranges** in `marker_simulator.py` if needed for your tape
+
+---
+
+## Architecture
+
+### Files
+
+- **`marker_simulator.py`** - MarkerSimulator class for adding/detecting synthetic markers
+- **`app.py`** - Main app with integrated marker mode toggle (`USE_MARKER_MODE`)
+- **`test_markers.py`** - Standalone demo for testing markers
+
+### MarkerSimulator Class
+
+```python
+from marker_simulator import MarkerSimulator
+
+sim = MarkerSimulator(marker_color='green', marker_size=15)
+
+# Add markers to frame
+marked_frame, positions = sim.add_markers_to_frame(frame, board_roi)
+
+# Detect markers by color  
+centroids, confidence = sim.detect_markers_in_frame(marked_frame)
+
+# Calculate board vectors
+board_info = sim.calculate_board_vectors(centroids)
+
+# Draw overlays
+vis = sim.draw_board_overlay(marked_frame, board_info)
+```
+
+---
+
+## Tips & Troubleshooting
+
+### Markers Not Detecting?
+- **Lighting**: Ensure markers are bright enough relative to background
+- **HSV range**: Try adjusting HSV bounds in `marker_simulator.py`
+- **Color conflicts**: Water might have same HSV as marker color — try a different color
+  
+### False Positives?
+- Increase `MIN_DETECT_AREA_FULL` to require larger blobs
+- Tighten the ROI window around feet using pose landmarks
+
+### Slow Performance?
+- Set `DETECT_EVERY = 5` to detect less frequently
+- Reduce frame resolution
+- Disable `SHOW_DEBUG_OVERLAYS`
+
+---
+
+## Future Improvements
+
+- [ ] Train YOLOv8 on frames with synthetic markers
+- [ ] Add real neon tape detection with auto-calibration
+- [ ] Implement board stability metrics over time
+- [ ] Add confidence scoring for detection robustness
+- [ ] Create annotated dataset from synthetic marker frames
+
+---
+
+## References
+
+**See also:**
+- [marker_simulator.py](marker_simulator.py) - Full implementation
+- [app.py](app.py) - Integration example (search for `USE_MARKER_MODE`)
+- [test_markers.py](test_markers.py) - Demo/test script
+
+---
+
+**Author Notes:**
+Synthetic marker simulation is a proven technique used in:
+- Motion capture systems (e.g., Vicon, OptiTrack)
+- Sports analytics (golf, baseball, tennis)
+- Robotics vision pipelines
+
+This approach significantly increases reliability while keeping complexity low.
+
+
+
+================================================================================
+FILE: README.md
+================================================================================
+
+# ML_Surfing
+
+
+================================================================================
+FILE: app.py
+================================================================================
+
+# app.py
+# Stable surfboard detector + MediaPipe pose
+# Replace your current app.py with this file.
+#
+# Requirements: mediapipe, opencv-python, numpy
+# Usage: source venv/bin/activate && python3 app.py
+
+import cv2
+import mediapipe as mp
+import numpy as np
+import time
+from math import sqrt
+from marker_simulator import MarkerSimulator
+
+# =========================
+# Tunables - tweak these
+# =========================
+USE_TRACKER = False          # Disabled by default — trackers often drift to distant objects.
+USE_MARKER_MODE = True       # Enable synthetic marker detection (turn OFF for old OpenCV method)
+MARKER_COLOR = 'green'       # Marker color: 'green', 'pink', 'yellow', 'orange'
+DETECT_EVERY = 3            # run detection every N frames (1 = every frame)
+DETECT_RESIZE_W = 640       # width to scale ROI to for detection (speed/accuracy tradeoff)
+EMA_ALPHA = 0.30            # smoothing factor for bounding box (0.0-1.0)
+PAD_FACTOR = 0.12           # expand detected box by this fraction (helps include full board)
+MIN_DETECT_AREA_FULL = 1200 # absolute minimum hull area in full-frame pixels (tune up if false positives)
+CONF_AREA_REF = 14000.0     # map area -> confidence (increase to require larger area)
+POLY_CONF_DRAW = 0.45       # polygon will be drawn only if confidence >= this
+BOX_CONF_DRAW = 0.20        # box will be drawn if confidence >= this
+BLUE_LOWER = np.array([85, 55, 45])   # HSV lower bound for board color (tweak)
+BLUE_UPPER = np.array([140, 255, 255])# HSV upper bound for board color (tweak)
+SHOW_DEBUG_OVERLAYS = False  # Toggle: draw ROI and mask for debugging
+MAX_POLY_POINTS = 8         # approximate polygon points for drawing (keeps shape stable)
+SHOULDER_CLOSE_PIX = 200    # if shoulders wider than this, person likely close to camera -> hide board boxes
+# =========================
+
+# Helpers
+def clamp(v, a, b): return max(a, min(b, v))
+def ema(prev, new, alpha):
+    if prev is None:
+        return np.array(new, dtype=float)
+    return (1 - alpha) * np.array(prev, dtype=float) + alpha * np.array(new, dtype=float)
+
+def expand_rect(x, y, w, h, pad, frame_w, frame_h):
+    cx = x + w/2.0; cy = y + h/2.0
+    w2 = w * (1.0 + pad); h2 = h * (1.0 + pad)
+    x2 = int(clamp(cx - w2/2.0, 0, frame_w-1))
+    y2 = int(clamp(cy - h2/2.0, 0, frame_h-1))
+    w2 = int(clamp(w2, 1, frame_w - x2))
+    h2 = int(clamp(h2, 1, frame_h - y2))
+    return x2, y2, w2, h2
+
+# Camera
+cap = cv2.VideoCapture(0)
+if not cap.isOpened():
+    print("ERROR: Cannot open camera")
+    raise SystemExit
+
+cv2.namedWindow("Surf Pose + Board Tracker", cv2.WINDOW_NORMAL)
+
+# Mediapipe
+mp_pose = mp.solutions.pose
+mp_drawing = mp.solutions.drawing_utils
+pose = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
+
+# State
+frame_idx = 0
+smoothed_box = None   # [cx, cy, w, h] in full-frame pixel coords
+last_poly = None      # polygon points (Nx2) in full-frame coords
+last_conf = 0.0
+last_poly_age = 999
+
+# Optional tracker (not used by default)
+tracker = None
+
+# FPS helper
+t0 = time.time(); frames = 0
+
+try:
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        H, W = frame.shape[:2]
+        vis = frame.copy()
+
+        # ---- pose (always run) ----
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = pose.process(rgb)
+
+        feet_center = None
+        shoulder_dist = 0
+        if results.pose_landmarks:
+            lm = results.pose_landmarks.landmark
+            try:
+                la = lm[mp_pose.PoseLandmark.LEFT_ANKLE.value]
+                ra = lm[mp_pose.PoseLandmark.RIGHT_ANKLE.value]
+                ls = lm[mp_pose.PoseLandmark.LEFT_SHOULDER.value]
+                rs = lm[mp_pose.PoseLandmark.RIGHT_SHOULDER.value]
+                lx, ly = clamp(int(la.x * W), 0, W-1), clamp(int(la.y * H), 0, H-1)
+                rx, ry = clamp(int(ra.x * W), 0, W-1), clamp(int(ra.y * H), 0, H-1)
+                feet_center = ((lx + rx)//2, (ly + ry)//2)
+                s_lx, s_ly = clamp(int(ls.x * W), 0, W-1), clamp(int(ls.y * H), 0, H-1)
+                s_rx, s_ry = clamp(int(rs.x * W), 0, W-1), clamp(int(rs.y * H), 0, H-1)
+                shoulder_dist = sqrt((s_lx - s_rx)**2 + (s_ly - s_ry)**2)
+            except Exception:
+                feet_center = None
+
+        # If person is very close (shoulders wide), hide board overlays -> helps facial closeups
+        person_too_close = shoulder_dist >= SHOULDER_CLOSE_PIX
+        if person_too_close:
+            smoothed_box = None
+            last_poly = None
+            last_conf = 0.0
+            last_poly_age = 999
+            tracker = None
+
+        # Use cheap tracker? (we're not using it by default because it caused drift)
+        if USE_TRACKER and tracker is None and smoothed_box is not None:
+            # initialize tracker on current smoothed box
+            try:
+                tracker = cv2.TrackerCSRT_create() if not hasattr(cv2, "legacy") else cv2.legacy.TrackerCSRT_create()
+                x = int(smoothed_box[0] - smoothed_box[2]/2)
+                y = int(smoothed_box[1] - smoothed_box[3]/2)
+                w = int(smoothed_box[2]); h = int(smoothed_box[3])
+                tracker.init(frame, (x,y,w,h))
+            except Exception:
+                tracker = None
+
+        # Try tracker first (fast), only if enabled
+        tracked_box = None
+        if USE_TRACKER and tracker is not None and not person_too_close:
+            ok, tb = tracker.update(frame)
+            if ok:
+                tx, ty, tw, th = [int(round(v)) for v in tb]
+                if tw > 4 and th > 4:
+                    tracked_box = (tx, ty, tw, th)
+
+        # Run detection periodically (or if no tracker box)
+        if (frame_idx % DETECT_EVERY == 0) and not person_too_close:
+            # Build ROI around feet if we have it (prefer downwards area)
+            if feet_center:
+                fx, fy = feet_center
+                # ROI parameters relative to frame
+                roi_w = int(W * 0.9)
+                roi_h = int(H * 0.7)
+                rx1 = clamp(int(fx - roi_w*0.5), 0, W-1)
+                ry1 = clamp(int(fy - roi_h*0.25), 0, H-1)
+                rx2 = clamp(rx1 + roi_w, 0, W)
+                ry2 = clamp(ry1 + roi_h, 0, H)
+            else:
+                rx1, ry1, rx2, ry2 = 0, 0, W, H
+
+            roi = frame[ry1:ry2, rx1:rx2]
+            if roi is None or roi.size == 0:
+                roi = frame.copy(); rx1, ry1 = 0, 0
+
+            # Scale ROI for detection speed
+            scale = 1.0
+            if roi.shape[1] > DETECT_RESIZE_W:
+                scale = DETECT_RESIZE_W / float(roi.shape[1])
+            small = cv2.resize(roi, (int(roi.shape[1]*scale), int(roi.shape[0]*scale)))
+            sH, sW = small.shape[:2]
+
+            # color mask (blue-ish)
+            hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+            mask_color = cv2.inRange(hsv, BLUE_LOWER, BLUE_UPPER)
+            mask_color = cv2.morphologyEx(mask_color, cv2.MORPH_OPEN, np.ones((5,5), np.uint8))
+            mask_color = cv2.morphologyEx(mask_color, cv2.MORPH_DILATE, np.ones((3,3), np.uint8))
+
+            # edges
+            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+            blur = cv2.GaussianBlur(gray, (7,7), 0)
+            edges = cv2.Canny(blur, 40, 110)
+            edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, np.ones((7,7), np.uint8))
+
+            # combine
+            combined = cv2.bitwise_or(edges, mask_color)
+
+            # find contours on combined map
+            contours, _ = cv2.findContours(combined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            all_pts = []
+            for c in contours:
+                a = cv2.contourArea(c)
+                if a < 150 * (scale**2):  # ignore tiny blobs (in small scale)
+                    continue
+                # collect points
+                pts = c.reshape(-1,2)
+                all_pts.append(pts)
+
+            detected_box = None
+            detected_poly = None
+            detected_conf = 0.0
+
+            if len(all_pts) > 0:
+                # merge all points into single array
+                merged = np.vstack(all_pts)
+                # convex hull in small coords
+                hull = cv2.convexHull(merged)
+                hull_area = cv2.contourArea(hull)
+                hull_area_full = hull_area / (scale**2) if scale > 0 else hull_area
+                if hull_area_full >= MIN_DETECT_AREA_FULL:
+                    # min area rect in small coords, then scale up
+                    rect = cv2.minAreaRect(hull)
+                    (cx_s, cy_s), (rw_s, rh_s), ang = rect
+                    # map center back to full-frame via ROI offset and scale
+                    cx_full = cx_s / scale + rx1
+                    cy_full = cy_s / scale + ry1
+                    w_full = rw_s / scale
+                    h_full = rh_s / scale
+                    # aspect check (elognated board)
+                    aspect = max(w_full, h_full) / (min(w_full, h_full) + 1e-6)
+                    if 1.2 <= aspect <= 12.0:
+                        bx = int(cx_full - w_full/2)
+                        by = int(cy_full - h_full/2)
+                        bw = int(round(w_full))
+                        bh = int(round(h_full))
+                        bx, by, bw, bh = expand_rect(bx, by, bw, bh, PAD_FACTOR, W, H)
+                        detected_box = (bx, by, bw, bh)
+                        # create polygon in full coords from hull scaled up
+                        hull_full = (hull.astype(float) / scale) + np.array([[rx1, ry1]])
+                        # approx poly to reduce noisy points
+                        eps = 0.01 * cv2.arcLength(hull_full.astype(np.int32), True)
+                        try:
+                            approx = cv2.approxPolyDP(hull_full.astype(np.int32), eps, True)
+                            if len(approx) > MAX_POLY_POINTS:
+                                idxs = np.round(np.linspace(0, len(approx)-1, MAX_POLY_POINTS)).astype(int)
+                                approx = approx[idxs]
+                            detected_poly = approx.reshape(-1,2)
+                        except Exception:
+                            detected_poly = hull_full.reshape(-1,2).astype(int)
+                        detected_conf = min(1.0, hull_area_full / CONF_AREA_REF)
+
+            # color-fallback (very large color blob)
+            if detected_box is None:
+                contours_c, _ = cv2.findContours(mask_color, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                for c in contours_c:
+                    a = cv2.contourArea(c)
+                    if a / (scale**2) > 3000:
+                        x0, y0, w0, h0 = cv2.boundingRect(c)
+                        bx = int(x0 / scale) + rx1
+                        by = int(y0 / scale) + ry1
+                        bw = int(w0 / scale); bh = int(h0 / scale)
+                        bx, by, bw, bh = expand_rect(bx, by, bw, bh, PAD_FACTOR, W, H)
+                        detected_box = (bx, by, bw, bh)
+                        detected_conf = min(1.0, (a / (scale**2)) / CONF_AREA_REF)
+                        detected_poly = None
+                        break
+
+            # adopt detection
+            if detected_box is not None:
+                last_conf = detected_conf
+                last_poly = detected_poly
+                last_poly_age = 0
+                # set smoothed box immediately (so label jumps less)
+                cx = detected_box[0] + detected_box[2]/2.0
+                cy = detected_box[1] + detected_box[3]/2.0
+                smoothed_box = ema(smoothed_box, [cx, cy, detected_box[2], detected_box[3]], EMA_ALPHA)
+            else:
+                # no detection -> age out polygon/confidence
+                last_poly_age += 1
+                last_conf = max(0.0, last_conf * 0.95)
+
+            # if debug overlay requested show ROI & mask (scaled back)
+            if SHOW_DEBUG_OVERLAYS:
+                # draw ROI rect on vis
+                cv2.rectangle(vis, (rx1, ry1), (rx2, ry2), (200, 200, 0), 1)
+                mask_up = cv2.resize(mask_color, (rx2 - rx1, ry2 - ry1))
+                # show mask in top-left small window
+                mh, mw = mask_up.shape
+                vis[0:mh, 0:mw, 2] = cv2.add(vis[0:mh, 0:mw, 2], mask_up)
+
+        # If tracker was used but we decided to not use trackers by default, we ignore that path.
+
+        # Decide final drawing: prefer smoothed_box, fallback to tracked_box
+        draw_box = None
+        if smoothed_box is not None and last_conf >= BOX_CONF_DRAW and not person_too_close:
+            draw_box = smoothed_box
+        elif tracked_box is not None and not person_too_close:
+            # convert tracked box to center format
+            tx, ty, tw, th = tracked_box
+            draw_box = np.array([tx + tw/2.0, ty + th/2.0, tw, th], dtype=float)
+
+        # Draw polygon if confident
+        if last_poly is not None and last_conf >= POLY_CONF_DRAW and last_poly_age < 10 and not person_too_close:
+            try:
+                pts = last_poly.astype(int)
+                cv2.polylines(vis, [pts], True, (0, 220, 80), 2)
+            except Exception:
+                pass
+
+        # Draw box and label (with smoothing)
+        if draw_box is not None:
+            cx, cy, bw, bh = draw_box.astype(float)
+            x = int(round(cx - bw/2.0)); y = int(round(cy - bh/2.0))
+            w_box = int(round(bw)); h_box = int(round(bh))
+            x = clamp(x, 0, W-1); y = clamp(y, 0, H-1)
+            w_box = clamp(w_box, 1, W - x); h_box = clamp(h_box, 1, H - y)
+            # draw rectangle
+            cv2.rectangle(vis, (x, y), (x + w_box, y + h_box), (16, 200, 20), 3)
+            # label inside box with clipping so it remains on board
+            label = "Board"
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+            lx = int(clamp(cx - tw/2.0, x + 4, x + w_box - tw - 4))
+            ly = int(clamp(cy + th/2.0, y + th + 4, y + h_box - 4))
+            cv2.putText(vis, label, (lx, ly), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (10,10,10), 3)
+            cv2.putText(vis, label, (lx, ly), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (230,255,230), 1)
+
+        # Draw feet marker & pose (always)
+        if feet_center:
+            cv2.circle(vis, feet_center, 5, (0,180,255), -1)
+        if results.pose_landmarks:
+            mp_drawing.draw_landmarks(vis, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
+
+        # status
+        frames += 1
+        if frames % 10 == 0:
+            t1 = time.time()
+            fps = frames / (t1 - t0 + 1e-6)
+            t0 = t1; frames = 0
+        else:
+            fps = None
+        info = f"Conf={last_conf:.2f}  Shoulders={int(shoulder_dist)}"
+        if fps:
+            info += f"  FPS~{fps:.1f}"
+        cv2.putText(vis, info, (8, H-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (220,220,220), 1)
+
+        cv2.imshow("Surf Pose + Board Tracker", vis)
+        key = cv2.waitKey(1) & 0xFF
+        if key in (27, ord('q')):
+            break
+        if key == ord('d'):
+            # toggle debug overlays
+            SHOW_DEBUG_OVERLAYS = not SHOW_DEBUG_OVERLAYS
+        if key == ord('t'):
+            # toggle tracker usage
+            USE_TRACKER = not USE_TRACKER
+            if not USE_TRACKER:
+                tracker = None
+
+        frame_idx += 1
+
+except KeyboardInterrupt:
+    print("Interrupted by user")
+
+finally:
+    try:
+        pose.close()
+    except Exception:
+        pass
+    cap.release()
+    cv2.destroyAllWindows()
+
+
+
+================================================================================
+FILE: extract_frames.py
+================================================================================
+
+import cv2
+import os
+
+video_folder = "videos"
+output_folder = "frames"
+os.makedirs(output_folder, exist_ok=True)
+
+# extract every Nth frame (e.g., one every 8 frames)
+FRAME_INTERVAL = 8
+
+for video_file in os.listdir(video_folder):
+    if not video_file.lower().endswith((".mp4", ".mov", ".m4v")):
+        continue
+
+    video_path = os.path.join(video_folder, video_file)
+    vidcap = cv2.VideoCapture(video_path)
+
+    success, frame = vidcap.read()
+    frame_count = 0
+    saved_count = 0
+
+    print(f"Processing {video_file}...")
+
+    while success:
+        if frame_count % FRAME_INTERVAL == 0:
+            out_path = os.path.join(
+                output_folder,
+                f"{os.path.splitext(video_file)[0]}_frame_{saved_count:05}.jpg",
+            )
+            cv2.imwrite(out_path, frame)
+            saved_count += 1
+
+        success, frame = vidcap.read()
+        frame_count += 1
+
+    print(f"Extracted {saved_count} frames from {video_file}")
+
+
+
+================================================================================
+FILE: marker_simulator.py
+================================================================================
+
+"""
+marker_simulator.py
+
+Simulates neon tape markers on the surfboard for testing the detection pipeline.
+Adds synthetic bright markers without needing physical tape.
+
+HSV color ranges for bright neon markers:
+- Neon Green: H ~80-85, S ~255, V ~255
+- Neon Pink/Magenta: H ~140-165, S ~255, V ~255
+- Neon Yellow: H ~20-30, S ~255, V ~255
+- Neon Orange: H ~5-20, S ~255, V ~255
+"""
+
+import cv2
+import numpy as np
+from math import atan2, sqrt
+
+class MarkerSimulator:
+    def __init__(self, marker_color='green', marker_size=15):
+        """
+        Initialize marker simulator.
+        
+        Args:
+            marker_color: 'green', 'pink', 'yellow', or 'orange'
+            marker_size: radius of marker circles (pixels)
+        """
+        self.marker_size = marker_size
+        self.marker_color = marker_color
+        
+        # BGR colors for neon markers (OpenCV uses BGR, not RGB)
+        self.color_map = {
+            'green': (0, 255, 0),      # Neon green
+            'pink': (255, 0, 255),     # Neon pink/magenta
+            'yellow': (0, 255, 255),   # Neon yellow
+            'orange': (0, 165, 255),   # Neon orange
+        }
+        
+        self.marker_positions = {}  # Store marker positions for this frame
+    
+    def add_markers_to_frame(self, frame, board_roi=None):
+        """
+        Add synthetic neon tape markers to frame.
+        
+        If no ROI provided, places markers in lower half of frame (typical surfboard area).
+        Otherwise places them within/around the provided ROI.
+        
+        Args:
+            frame: input frame (H, W, 3) BGR
+            board_roi: Optional tuple (x1, y1, x2, y2) defining board region
+            
+        Returns:
+            marked_frame: frame with markers added
+            marker_positions: dict of marker names -> (x, y) positions
+        """
+        marked_frame = frame.copy()
+        H, W = frame.shape[:2]
+        color = self.color_map.get(self.marker_color, (0, 255, 0))
+        
+        # Determine marker placement region
+        if board_roi is not None:
+            x1, y1, x2, y2 = board_roi
+            # Place markers within ROI
+            roi_w = x2 - x1
+            roi_h = y2 - y1
+            
+            # Nose marker (top of ROI)
+            nose_x = int(x1 + roi_w * 0.5)
+            nose_y = int(y1 + roi_h * 0.2)
+            
+            # Tail marker (bottom of ROI)
+            tail_x = int(x1 + roi_w * 0.5)
+            tail_y = int(y1 + roi_h * 0.8)
+            
+            # Center marker (middle of ROI)
+            center_x = int(x1 + roi_w * 0.5)
+            center_y = int(y1 + roi_h * 0.5)
+            
+        else:
+            # Default: lower half of frame, centered horizontally
+            board_y_start = int(H * 0.4)
+            board_y_end = int(H * 0.95)
+            board_x_center = W // 2
+            
+            # Nose (top of board region)
+            nose_x = board_x_center
+            nose_y = board_y_start
+            
+            # Tail (bottom of board region)
+            tail_x = board_x_center
+            tail_y = board_y_end
+            
+            # Center (middle of board region)
+            center_x = board_x_center
+            center_y = (board_y_start + board_y_end) // 2
+        
+        # Draw markers as circles with a small cross
+        self.marker_positions = {
+            'nose': (nose_x, nose_y),
+            'tail': (tail_x, tail_y),
+            'center': (center_x, center_y),
+        }
+        
+        for name, (mx, my) in self.marker_positions.items():
+            # Clamp to frame bounds
+            mx = max(0, min(W - 1, mx))
+            my = max(0, min(H - 1, my))
+            self.marker_positions[name] = (mx, my)
+            
+            # Draw filled circle
+            cv2.circle(marked_frame, (mx, my), self.marker_size, color, -1)
+            
+            # Draw cross through center
+            cross_len = self.marker_size // 2
+            cv2.line(marked_frame, (mx - cross_len, my), (mx + cross_len, my), (0, 0, 0), 1)
+            cv2.line(marked_frame, (mx, my - cross_len), (mx, my + cross_len), (0, 0, 0), 1)
+        
+        return marked_frame, self.marker_positions
+    
+    def detect_markers_in_frame(self, frame, hsv_range=None):
+        """
+        Detect the synthetic markers in a frame by color.
+        
+        Args:
+            frame: input frame (BGR)
+            hsv_range: Optional (lower, upper) HSV ranges. If None, auto-detects for marker color.
+            
+        Returns:
+            marker_centroids: dict of marker names -> (x, y) if detected, else None
+            confidence: how many pixels matched the color (for confidence scoring)
+        """
+        if hsv_range is None:
+            # Auto HSV ranges for marker colors
+            hsv_ranges = {
+                'green': (np.array([35, 100, 100]), np.array([85, 255, 255])),
+                'pink': (np.array([125, 100, 100]), np.array([165, 255, 255])),
+                'yellow': (np.array([15, 100, 100]), np.array([35, 255, 255])),
+                'orange': (np.array([5, 100, 100]), np.array([25, 255, 255])),
+            }
+            hsv_range = hsv_ranges.get(self.marker_color, hsv_ranges['green'])
+        
+        lower, upper = hsv_range
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, lower, upper)
+        
+        # Find contours
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        centroids = {}
+        confidences = {}
+        
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < 50:  # Ignore tiny blobs
+                continue
+            
+            M = cv2.moments(cnt)
+            if M['m00'] != 0:
+                cx = int(M['m10'] / M['m00'])
+                cy = int(M['m01'] / M['m00'])
+                centroids[f'marker_{len(centroids)}'] = (cx, cy)
+                confidences[f'marker_{len(centroids)}'] = area
+        
+        return centroids, confidences
+    
+    def calculate_board_vectors(self, centroids):
+        """
+        Calculate board orientation from detected marker centroids.
+        
+        Assumes 'nose' and 'tail' markers are detected.
+        
+        Args:
+            centroids: dict of marker names -> (x, y)
+            
+        Returns:
+            board_info: dict with keys:
+                - 'center': (x, y) midpoint between nose and tail
+                - 'angle': angle in radians (-pi to pi)
+                - 'angle_deg': angle in degrees
+                - 'length': distance from nose to tail
+                - 'vector': (dx, dy) unit vector pointing from tail to nose
+        """
+        if 'nose' not in centroids or 'tail' not in centroids:
+            return None
+        
+        nx, ny = centroids['nose']
+        tx, ty = centroids['tail']
+        
+        # Center is midpoint
+        cx = (nx + tx) / 2.0
+        cy = (ny + ty) / 2.0
+        
+        # Vector from tail to nose
+        dx = nx - tx
+        dy = ny - ty
+        length = sqrt(dx**2 + dy**2)
+        
+        if length < 1e-6:
+            return None
+        
+        # Unit vector
+        ux = dx / length
+        uy = dy / length
+        
+        # Angle: atan2(y_delta, x_delta) gives angle from tail pointing toward nose
+        angle = atan2(dy, dx)
+        angle_deg = np.degrees(angle)
+        
+        return {
+            'center': (cx, cy),
+            'angle': angle,
+            'angle_deg': angle_deg,
+            'length': length,
+            'vector': (ux, uy),
+            'nose': (nx, ny),
+            'tail': (tx, ty),
+        }
+    
+    def draw_board_overlay(self, frame, board_info, color=(0, 255, 0), thickness=3):
+        """
+        Draw board orientation overlay on frame based on detected markers.
+        
+        Args:
+            frame: input frame
+            board_info: output from calculate_board_vectors()
+            color: BGR color for overlay
+            thickness: line thickness
+            
+        Returns:
+            frame with overlay drawn
+        """
+        if board_info is None:
+            return frame
+        
+        overlay = frame.copy()
+        cx, cy = board_info['center']
+        nx, ny = board_info['nose']
+        tx, ty = board_info['tail']
+        ux, uy = board_info['vector']
+        
+        # Draw line from tail to nose
+        cv2.line(overlay, (int(tx), int(ty)), (int(nx), int(ny)), color, thickness)
+        
+        # Draw circle at center
+        cv2.circle(overlay, (int(cx), int(cy)), 8, color, 2)
+        
+        # Draw direction arrow
+        arrow_len = 50
+        arrow_end_x = int(cx + arrow_len * ux)
+        arrow_end_y = int(cy + arrow_len * uy)
+        cv2.arrowedLine(overlay, (int(cx), int(cy)), (arrow_end_x, arrow_end_y), 
+                        color, thickness, tipLength=0.3)
+        
+        # Add info text
+        text = f"Angle: {board_info['angle_deg']:.1f}°  Len: {board_info['length']:.0f}px"
+        cv2.putText(overlay, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
+                   0.6, color, 2)
+        
+        return overlay
+
+
+
+================================================================================
+FILE: requirements.txt
+================================================================================
+
+absl-py==2.3.1
+attrs==25.4.0
+cffi==2.0.0
+contourpy==1.3.2
+cycler==0.12.1
+flatbuffers==25.9.23
+fonttools==4.60.1
+jax==0.6.2
+jaxlib==0.6.2
+kiwisolver==1.4.9
+matplotlib==3.10.7
+mediapipe==0.10.21
+ml_dtypes==0.5.3
+numpy==1.26.4
+opencv-contrib-python==4.11.0.86
+opencv-python==4.11.0.86
+opt_einsum==3.4.0
+packaging==25.0
+pillow==12.0.0
+protobuf==4.25.8
+pycparser==2.23
+pyparsing==3.2.5
+python-dateutil==2.9.0.post0
+scipy==1.15.3
+sentencepiece==0.2.1
+six==1.17.0
+sounddevice==0.5.3
+
+
+
+================================================================================
+FILE: test_markers.py
+================================================================================
+
+#!/usr/bin/env python3
+"""
+test_markers.py
+
+Real-time demo of marker simulator and detection.
+Tests the synthetic neon marker pipeline without needing physical tape.
+
+Keys:
+  's' - toggle marker simulation on/off
+  'c' - cycle through marker colors (green, pink, yellow, orange)
+  'd' - toggle detection overlay
+  'q' or ESC - quit
+"""
+
+import cv2
+import sys
+from marker_simulator import MarkerSimulator
+
+def main():
+    # Initialize capture (webcam or video file)
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print("ERROR: Cannot open camera. Trying sample video...")
+        # Try to find a video file
+        try:
+            cap = cv2.VideoCapture("videos/sample.mp4")
+            if not cap.isOpened():
+                print("ERROR: No video file found either.")
+                sys.exit(1)
+        except:
+            sys.exit(1)
+    
+    cv2.namedWindow("Marker Simulator Demo", cv2.WINDOW_NORMAL)
+    
+    marker_sim = MarkerSimulator(marker_color='green', marker_size=15)
+    
+    simulate_mode = True
+    show_detection = True
+    color_cycle = ['green', 'pink', 'yellow', 'orange']
+    color_idx = 0
+    
+    frame_count = 0
+    
+    print("""
+    ╔════════════════════════════════════════════════════════════╗
+    ║     Marker Simulator Demo - Synthetic Neon Tape Test       ║
+    ╠════════════════════════════════════════════════════════════╣
+    ║ CONTROLS:                                                  ║
+    ║   's' - Toggle marker simulation on/off                    ║
+    ║   'c' - Cycle through marker colors                        ║
+    ║   'd' - Toggle detection overlay                           ║
+    ║   'q' or ESC - Quit                                        ║
+    ╠════════════════════════════════════════════════════════════╣
+    ║ This demo tests the full pipeline:                         ║
+    ║   1. Add synthetic neon markers to frames                  ║
+    ║   2. Detect markers by HSV color                           ║
+    ║   3. Calculate board orientation from markers              ║
+    ║   4. Display board vectors and angle                       ║
+    ╚════════════════════════════════════════════════════════════╝
+    """)
+    
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                print("End of video or camera disconnected")
+                break
+            
+            H, W = frame.shape[:2]
+            vis = frame.copy()
+            
+            # Add synthetic markers if enabled
+            if simulate_mode:
+                # Simulate markers in lower half of frame
+                board_roi = (int(W*0.2), int(H*0.3), int(W*0.8), int(H*0.9))
+                vis, marker_pos = marker_sim.add_markers_to_frame(vis, board_roi)
+                
+                if show_detection:
+                    # Try to detect the markers we just added
+                    centroids, confidences = marker_sim.detect_markers_in_frame(vis)
+                    
+                    # For this test, we'll map detected centroids to nose/tail manually
+                    # In real use, we'd need clustering logic
+                    if len(centroids) >= 2:
+                        # Sort by y-coordinate: smallest y = nose, largest y = tail
+                        sorted_markers = sorted(centroids.items(), 
+                                              key=lambda item: item[1][1])
+                        detected_nose = sorted_markers[0][1]
+                        detected_tail = sorted_markers[-1][1]
+                        
+                        detected_centroids = {
+                            'nose': detected_nose,
+                            'tail': detected_tail,
+                        }
+                        
+                        board_info = marker_sim.calculate_board_vectors(detected_centroids)
+                        vis = marker_sim.draw_board_overlay(vis, board_info, 
+                                                           color=(0, 255, 0), thickness=2)
+                    
+                    # Draw detected marker centroids
+                    for name, (mx, my) in centroids.items():
+                        cv2.circle(vis, (mx, my), 5, (255, 0, 0), -1)
+            
+            # Draw info
+            mode_text = f"Mode: {'SIMULATE' if simulate_mode else 'DETECT ONLY'} | Color: {marker_sim.marker_color} | Overlay: {'ON' if show_detection else 'OFF'}"
+            cv2.putText(vis, mode_text, (10, H - 20), cv2.FONT_HERSHEY_SIMPLEX, 
+                       0.6, (255, 255, 255), 1)
+            
+            cv2.imshow("Marker Simulator Demo", vis)
+            
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q') or key == 27:  # q or ESC
+                break
+            elif key == ord('s'):
+                simulate_mode = not simulate_mode
+                print(f"Simulation: {'ON' if simulate_mode else 'OFF'}")
+            elif key == ord('c'):
+                color_idx = (color_idx + 1) % len(color_cycle)
+                marker_sim.marker_color = color_cycle[color_idx]
+                print(f"Marker color: {marker_sim.marker_color}")
+            elif key == ord('d'):
+                show_detection = not show_detection
+                print(f"Detection overlay: {'ON' if show_detection else 'OFF'}")
+            
+            frame_count += 1
+    
+    except KeyboardInterrupt:
+        print("\nInterrupted by user")
+    
+    finally:
+        cap.release()
+        cv2.destroyAllWindows()
+        print(f"\nProcessed {frame_count} frames")
+        print("Demo complete!")
+
+if __name__ == '__main__':
+    main()
+
+

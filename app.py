@@ -10,11 +10,14 @@ import mediapipe as mp
 import numpy as np
 import time
 from math import sqrt
+from marker_simulator import MarkerSimulator
 
 # =========================
 # Tunables - tweak these
 # =========================
 USE_TRACKER = False          # Disabled by default — trackers often drift to distant objects.
+USE_MARKER_MODE = True       # Enable synthetic marker detection (turn OFF for old OpenCV method)
+MARKER_COLOR = 'green'       # Marker color: 'green', 'pink', 'yellow', 'orange'
 DETECT_EVERY = 3            # run detection every N frames (1 = every frame)
 DETECT_RESIZE_W = 640       # width to scale ROI to for detection (speed/accuracy tradeoff)
 EMA_ALPHA = 0.30            # smoothing factor for bounding box (0.0-1.0)
