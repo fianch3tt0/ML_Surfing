@@ -1,0 +1,21 @@
+# Clip manifest: tag every evaluation clip with its conditions so metrics can
+# be sliced per condition (pass tags to evaluate.py --tags when running).
+#
+# Template — fill in after the first boat outing:
+#
+# clips:
+#   clip1_sunny_gopro.mp4:
+#     camera: gopro
+#     sun: behind_camera        # behind_camera | into_sun | overcast
+#     chop: light               # calm | light | heavy
+#     rider: cam
+#     board: blue_shortboard
+#     distance_band: near       # near (<8m) | mid (8-15m) | far (>15m)
+#     rider_free: false         # true for empty-wake FP-measurement clips
+#   empty_wake_1.mp4:
+#     camera: gopro
+#     sun: overcast
+#     chop: light
+#     rider_free: true
+
+clips: {}

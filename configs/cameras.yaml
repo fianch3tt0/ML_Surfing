@@ -1,0 +1,25 @@
+# Per-camera profiles. Select with: python app.py --camera gopro
+#
+# hfov_deg: horizontal field of view of the recording mode (metadata for
+#   pixel<->meter estimates; measure/verify for your exact camera + mode).
+# proc_width: downscale frames to this width before inference (0 = native).
+#   4K in -> 1920 processing keeps FPS high with no meaningful accuracy loss
+#   at wakesurf distances.
+# undistort: only true if the footage was NOT recorded in a linear mode;
+#   then fill k (3x3 intrinsics) and d (distortion coeffs) from calibration.
+
+profiles:
+  gopro:
+    hfov_deg: 87.0        # HERO "Linear" 16:9 — verify for your model/mode
+    proc_width: 1920
+    undistort: false
+
+  phone:
+    hfov_deg: 70.0        # typical main lens ~26mm equiv — verify for your phone
+    proc_width: 1920
+    undistort: false
+
+  webcam:
+    hfov_deg: 65.0
+    proc_width: 0
+    undistort: false

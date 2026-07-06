@@ -1,0 +1,41 @@
+# surftrack default pipeline config.
+# Swap models / add detectors here — no code changes needed.
+
+device: auto          # auto -> cuda (dev PC) -> mps (MacBook) -> cpu
+imgsz: 960            # inference input size (long side); raise for distant riders
+
+detectors:
+  # Rider: person boxes + keypoints (ankles anchor the board prior).
+  - type: yolo_pose
+    model_path: yolo11s-pose.pt
+    conf: 0.35
+    track: true
+
+  # Board: pretrained COCO baseline (class 37 = surfboard).
+  # After fine-tuning (Phase 3), point model_path at the custom weights and
+  # set classes: [0] (or whatever the single-class id is).
+  - type: yolo
+    model_path: yolo11s.pt
+    classes: [37]
+    conf: 0.20          # boards are hard — accept lower conf, fusion gates FPs
+    track: false        # rider tracking is enough; board identity comes from fusion
+
+  # Benchmark alternative (enable instead of the yolo entry to compare):
+  # - type: rtdetr
+  #   model_path: rtdetr-l.pt
+  #   classes: [37]
+  #   conf: 0.25
+
+  # Orientation channel (later phase, needs tape on the board):
+  # - type: marker
+  #   nose_color: orange
+  #   tail_color: pink
+
+fusion:
+  rider_coast_frames: 15      # frames to coast the rider through dropouts
+  board_coast_frames: 20
+  gone_after_frames: 60       # no rider this long -> GONE, reset tracks
+  down_aspect: 0.9            # rider bbox h/w below this -> DOWN (in the water)
+  board_gate_factor: 1.6      # board must be within this * rider height of ankles
+  est_board_width_factor: 1.0 # estimated board width as fraction of rider height
+  est_board_aspect: 0.25
