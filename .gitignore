@@ -1,1 +1,10 @@
 venv/
+.idea/
+__pycache__/
+*.pt
+runs/
+videos/
+frames/
+*.mp4
+*.mov
+*.m4v
